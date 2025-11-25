@@ -207,8 +207,10 @@
       border-radius: 999px;
     }
 
-    /* Weight chart */
-    #weight-chart {
+    /* Charts */
+    #weight-chart,
+    #calorie-chart,
+    #protein-chart {
       width: 100%;
       max-height: 220px;
     }
@@ -273,6 +275,9 @@
             <div class="small">Remaining</div>
           </div>
         </div>
+        <!-- protein goal text (based on latest weight) -->
+        <div class="small" id="protein-goal-summary" style="text-align:center;margin-top:4px;"></div>
+
         <div class="meals" id="today-meals"></div>
       </div>
 
@@ -362,6 +367,17 @@
         <div class="small" id="week-range" style="text-align:center;margin-top:6px;"></div>
       </div>
 
+      <!-- Calories & Protein graphs -->
+      <div class="card">
+        <div class="small" style="margin-bottom:4px;"><strong>Calories & protein trend</strong></div>
+
+        <div class="small">Calories: Consumed vs goal (last 30 days with entries)</div>
+        <canvas id="calorie-chart" height="160" style="margin-top:6px;"></canvas>
+
+        <div class="small" style="margin-top:10px;">Protein: Consumed vs goal (last 30 days with entries)</div>
+        <canvas id="protein-chart" height="160" style="margin-top:6px;"></canvas>
+      </div>
+
       <!-- Backup & restore -->
       <div class="card">
         <div class="small" style="margin-bottom:8px;"><strong>Backup & Restore</strong></div>
@@ -397,7 +413,7 @@
     <button type="button" id="tab-history-btn" class="tab-btn">History</button>
   </div>
 
-  <!-- Chart.js for weight graph -->
+  <!-- Chart.js for graphs -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <!-- Firebase SDKs -->
@@ -407,9 +423,11 @@
 
   <script>
     // === SETTINGS ===
-    const DAILY_GOAL = 1800; // base goal if no per-day override
+    const DAILY_GOAL          = 1800;   // base calorie goal
+    const PROTEIN_GOAL_PER_KG = 1.8;    // grams protein per kg bodyweight
+    let currentProteinGoal    = 0;      // updated from latest weight
 
-    // === FILL THIS WITH YOUR FIREBASE CONFIG ===
+    // === FIREBASE CONFIG ===
     const firebaseConfig = {
       apiKey: "AIzaSyBh4FkGLFPgXxgLXpu876iMWgsdAgmlblg",
       authDomain: "health-191f2.firebaseapp.com",
@@ -429,7 +447,9 @@
     let goalsCollection = null;
     let weightsCollection = null;
 
-    let weightChartInstance = null;
+    let weightChartInstance  = null;
+    let calorieChartInstance = null;
+    let proteinChartInstance = null;
 
     // === FIRESTORE HELPERS ===
     async function loadEntries() {
@@ -784,6 +804,7 @@
       const avg7El     = document.getElementById("weight-avg-7d");
       const avg30El    = document.getElementById("weight-avg-30d");
       const chartCanvas = document.getElementById("weight-chart");
+      const summaryEl  = document.getElementById("protein-goal-summary");
 
       if (!weights || weights.length === 0) {
         latestEl.textContent = "-";
@@ -793,6 +814,10 @@
           weightChartInstance.destroy();
           weightChartInstance = null;
         }
+        if (summaryEl) {
+          summaryEl.textContent = "Log a weight to set protein goal.";
+        }
+        currentProteinGoal = 0;
         return;
       }
 
@@ -800,7 +825,28 @@
       const sorted = [...weights].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 
       const last = sorted[sorted.length - 1];
-      latestEl.textContent = Number(last.weight).toFixed(1);
+      const latestWeight = Number(last.weight) || 0;
+      latestEl.textContent = latestWeight.toFixed(1);
+
+      // update protein goal based on latest weight
+      if (latestWeight > 0) {
+        currentProteinGoal = latestWeight * PROTEIN_GOAL_PER_KG;
+      } else {
+        currentProteinGoal = 0;
+      }
+
+      if (summaryEl) {
+        if (currentProteinGoal > 0) {
+          summaryEl.textContent =
+            "Current protein goal: " +
+            currentProteinGoal.toFixed(0) +
+            " g/day (based on " +
+            latestWeight.toFixed(1) +
+            " kg)";
+        } else {
+          summaryEl.textContent = "Log a weight to set protein goal.";
+        }
+      }
 
       const now = new Date();
       function daysDiff(fromDateKey) {
@@ -871,6 +917,118 @@
       });
     }
 
+    function renderCaloriesProteinCharts(entries, goalsMap) {
+      const calorieCanvas = document.getElementById("calorie-chart");
+      const proteinCanvas = document.getElementById("protein-chart");
+      if (!calorieCanvas || !proteinCanvas) return;
+
+      if (!entries || entries.length === 0) {
+        if (calorieChartInstance) { calorieChartInstance.destroy(); calorieChartInstance = null; }
+        if (proteinChartInstance) { proteinChartInstance.destroy(); proteinChartInstance = null; }
+        return;
+      }
+
+      // Group by dateKey
+      const byDate = {};
+      entries.forEach(e => {
+        if (!byDate[e.dateKey]) {
+          byDate[e.dateKey] = { calories: 0, protein: 0 };
+        }
+        byDate[e.dateKey].calories += e.calories || 0;
+        byDate[e.dateKey].protein  += e.protein  || 0;
+      });
+
+      const dates = Object.keys(byDate).sort().slice(-30); // last 30 days with entries
+      if (dates.length === 0) {
+        if (calorieChartInstance) { calorieChartInstance.destroy(); calorieChartInstance = null; }
+        if (proteinChartInstance) { proteinChartInstance.destroy(); proteinChartInstance = null; }
+        return;
+      }
+
+      const labels       = dates.map(d => d.slice(5)); // MM-DD
+      const calConsumed  = dates.map(d => byDate[d].calories);
+      const calGoal      = dates.map(d => getGoalForDate(d, goalsMap));
+      const protConsumed = dates.map(d => byDate[d].protein);
+
+      const proteinGoalValue = (currentProteinGoal && currentProteinGoal > 0)
+        ? currentProteinGoal
+        : 80; // fallback if no weight yet
+      const protGoalArray = dates.map(() => proteinGoalValue);
+
+      if (calorieChartInstance) calorieChartInstance.destroy();
+      if (proteinChartInstance) proteinChartInstance.destroy();
+
+      // Calories chart
+      calorieChartInstance = new Chart(calorieCanvas.getContext("2d"), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Consumed (kcal)",
+              data: calConsumed,
+              fill: false,
+              tension: 0.2
+            },
+            {
+              label: "Goal (kcal)",
+              data: calGoal,
+              fill: false,
+              borderDash: [4, 4],
+              tension: 0.2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 6 } },
+            y: {
+              ticks: {
+                callback: function(value) { return value + " kcal"; }
+              }
+            }
+          }
+        }
+      });
+
+      // Protein chart
+      proteinChartInstance = new Chart(proteinCanvas.getContext("2d"), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Protein (g)",
+              data: protConsumed,
+              fill: false,
+              tension: 0.2
+            },
+            {
+              label: "Goal (g)",
+              data: protGoalArray,
+              fill: false,
+              borderDash: [4, 4],
+              tension: 0.2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 6 } },
+            y: {
+              ticks: {
+                callback: function(value) { return value + " g"; }
+              }
+            }
+          }
+        }
+      });
+    }
+
     async function renderAll() {
       if (!entriesCollection || !goalsCollection || !weightsCollection || !currentUser) return;
       try {
@@ -887,6 +1045,7 @@
         renderTodayAndWeek(entries, goalsMap);
         renderHistory(entries);
         renderWeightSection(weights);
+        renderCaloriesProteinCharts(entries, goalsMap);
         setDefaultDateInput();
         setDefaultWeightDateInput();
         syncGoalInputToSelectedDate(goalsMap);
