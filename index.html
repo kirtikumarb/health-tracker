@@ -206,6 +206,12 @@
       font-size: 0.8rem;
       border-radius: 999px;
     }
+
+    /* Weight chart */
+    #weight-chart {
+      width: 100%;
+      max-height: 220px;
+    }
   </style>
 </head>
 <body>
@@ -213,8 +219,8 @@
   <!-- AUTH SCREEN (shown when not logged in) -->
   <div id="auth-screen">
     <div class="card">
-      <div class="auth-title">My Diet Tracker</div>
-      <div class="auth-subtitle">Sign in to track your calories & protein.</div>
+      <div class="auth-title">Health Tracker</div>
+      <div class="auth-subtitle">Sign in to track your calories, protein & weight. Each account has its own data.</div>
 
       <label for="auth-email">Email</label>
       <input type="email" id="auth-email" placeholder="you@example.com" />
@@ -230,7 +236,7 @@
       <div id="auth-error" class="error-text"></div>
 
       <div class="small" style="margin-top:10px;">
-        </br>Track. Transform. Triumph.
+        Track. Transform. Triumph.
       </div>
     </div>
   </div>
@@ -239,7 +245,7 @@
   <div class="app" id="app-root" style="display:none;">
     <div class="top-bar">
       <div>
-        <h1 style="display:inline-block; margin-right:4px;">My Diet Tracker</h1>
+        <h1 style="display:inline-block; margin-right:4px;">Health Tracker</h1>
         <div id="user-display" class="small"></div>
       </div>
       <button type="button" id="btn-logout" class="btn-outline" style="padding:6px 10px;">Logout</button>
@@ -299,6 +305,42 @@
         </div>
       </div>
 
+      <!-- Weight tracking card -->
+      <div class="card">
+        <div class="small" style="margin-bottom:4px;"><strong>Weight tracking</strong></div>
+
+        <label for="weight-date">Date</label>
+        <input type="date" id="weight-date" />
+
+        <label for="weight-value">Weight (kg)</label>
+        <input type="number" id="weight-value" inputmode="decimal" placeholder="e.g. 78.5" />
+
+        <button type="button" id="weight-save-btn" class="btn-secondary" style="margin-top:4px;">Save weight</button>
+
+        <div class="summary" style="margin-top:8px;">
+          <div>
+            <div id="weight-latest">-</div>
+            <div class="small">Latest (kg)</div>
+          </div>
+          <div>
+            <div id="weight-avg-7d">-</div>
+            <div class="small">Avg last 7 days</div>
+          </div>
+          <div>
+            <div id="weight-avg-30d">-</div>
+            <div class="small">Avg last 30 days</div>
+          </div>
+        </div>
+
+        <div style="margin-top:8px;">
+          <canvas id="weight-chart" height="180"></canvas>
+        </div>
+
+        <div class="small">
+          Graph shows up to your last 30 weight entries.
+        </div>
+      </div>
+
       <!-- Weekly stats -->
       <div class="card">
         <div class="summary">
@@ -328,7 +370,7 @@
         <input type="file" id="import-file" accept="application/json" style="display:none" />
         <div class="small">
           Export creates a backup file you can save in Files / iCloud.<br />
-          Import will replace your current data with the backup (for this account).
+          Import will replace your current data (entries, goals, weights) for this account.
         </div>
       </div>
 
@@ -354,6 +396,9 @@
     <button type="button" id="tab-today-btn" class="tab-btn tab-active">Today</button>
     <button type="button" id="tab-history-btn" class="tab-btn">History</button>
   </div>
+
+  <!-- Chart.js for weight graph -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -382,8 +427,11 @@
     let currentUser = null;
     let entriesCollection = null;
     let goalsCollection = null;
+    let weightsCollection = null;
 
-    // === FIRESTORE HELPERS (depend on collections) ===
+    let weightChartInstance = null;
+
+    // === FIRESTORE HELPERS ===
     async function loadEntries() {
       if (!entriesCollection) return [];
       const snapshot = await entriesCollection.orderBy("timestamp", "asc").get();
@@ -404,6 +452,15 @@
         }
       });
       return goals;
+    }
+
+    async function loadWeights() {
+      if (!weightsCollection) return [];
+      const snapshot = await weightsCollection.orderBy("dateKey", "asc").get();
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
     }
 
     async function addEntry(entry) {
@@ -428,15 +485,27 @@
       }
     }
 
-    async function replaceAllEntriesAndGoals(entries, goalsObj) {
-      if (!entriesCollection || !goalsCollection) return;
-      const [entrySnap, goalSnap] = await Promise.all([
+    async function setWeightForDate(dateKey, weightValue) {
+      if (!weightsCollection) return;
+      const docRef = weightsCollection.doc(dateKey); // one weight per date
+      await docRef.set({
+        dateKey: dateKey,
+        weight: weightValue,
+        timestamp: Date.now()
+      });
+    }
+
+    async function replaceAllData(entries, goalsObj, weights) {
+      if (!entriesCollection || !goalsCollection || !weightsCollection) return;
+      const [entrySnap, goalSnap, weightSnap] = await Promise.all([
         entriesCollection.get(),
-        goalsCollection.get()
+        goalsCollection.get(),
+        weightsCollection.get()
       ]);
       const batch = db.batch();
       entrySnap.forEach(doc => batch.delete(doc.ref));
       goalSnap.forEach(doc => batch.delete(doc.ref));
+      weightSnap.forEach(doc => batch.delete(doc.ref));
 
       entries.forEach(e => {
         const ref = entriesCollection.doc();
@@ -457,6 +526,20 @@
             const ref = goalsCollection.doc(dateKey);
             batch.set(ref, { dateKey: dateKey, goal: val });
           }
+        });
+      }
+
+      if (Array.isArray(weights)) {
+        weights.forEach(w => {
+          const dateKey = String(w.dateKey || "");
+          const weightVal = Number(w.weight || 0);
+          if (!dateKey || isNaN(weightVal) || weightVal <= 0) return;
+          const ref = weightsCollection.doc(dateKey);
+          batch.set(ref, {
+            dateKey: dateKey,
+            weight: weightVal,
+            timestamp: Number(w.timestamp || Date.now())
+          });
         });
       }
 
@@ -496,6 +579,16 @@
 
     function setDefaultDateInput() {
       const dateInput = document.getElementById("date");
+      if (!dateInput) return;
+      const todayKey = formatDateKey(new Date());
+      if (!dateInput.value) {
+        dateInput.value = todayKey;
+      }
+      dateInput.max = todayKey;
+    }
+
+    function setDefaultWeightDateInput() {
+      const dateInput = document.getElementById("weight-date");
       if (!dateInput) return;
       const todayKey = formatDateKey(new Date());
       if (!dateInput.value) {
@@ -686,10 +779,106 @@
       });
     }
 
+    function renderWeightSection(weights) {
+      const latestEl   = document.getElementById("weight-latest");
+      const avg7El     = document.getElementById("weight-avg-7d");
+      const avg30El    = document.getElementById("weight-avg-30d");
+      const chartCanvas = document.getElementById("weight-chart");
+
+      if (!weights || weights.length === 0) {
+        latestEl.textContent = "-";
+        avg7El.textContent   = "-";
+        avg30El.textContent  = "-";
+        if (weightChartInstance) {
+          weightChartInstance.destroy();
+          weightChartInstance = null;
+        }
+        return;
+      }
+
+      // sort by dateKey ascending
+      const sorted = [...weights].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+
+      const last = sorted[sorted.length - 1];
+      latestEl.textContent = Number(last.weight).toFixed(1);
+
+      const now = new Date();
+      function daysDiff(fromDateKey) {
+        const d = new Date(fromDateKey + "T00:00:00");
+        const diffMs = now - d;
+        return diffMs / (1000 * 60 * 60 * 24);
+      }
+
+      let sum7 = 0, count7 = 0;
+      let sum30 = 0, count30 = 0;
+
+      sorted.forEach(w => {
+        const diff = daysDiff(w.dateKey);
+        if (diff <= 7) {
+          sum7 += Number(w.weight) || 0;
+          count7++;
+        }
+        if (diff <= 30) {
+          sum30 += Number(w.weight) || 0;
+          count30++;
+        }
+      });
+
+      avg7El.textContent   = count7  > 0 ? (sum7 / count7 ).toFixed(1) : "-";
+      avg30El.textContent  = count30 > 0 ? (sum30 / count30).toFixed(1) : "-";
+
+      // Chart: last 30 entries
+      const lastN = sorted.slice(-30);
+      const labels = lastN.map(w => w.dateKey.slice(5)); // show MM-DD
+      const data   = lastN.map(w => Number(w.weight).toFixed(1));
+
+      if (weightChartInstance) {
+        weightChartInstance.destroy();
+      }
+      weightChartInstance = new Chart(chartCanvas.getContext("2d"), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: "Weight (kg)",
+            data: data,
+            fill: false,
+            tension: 0.2
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              display: false
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                maxTicksLimit: 6
+              }
+            },
+            y: {
+              ticks: {
+                callback: function(value) {
+                  return value + " kg";
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
     async function renderAll() {
-      if (!entriesCollection || !goalsCollection || !currentUser) return;
+      if (!entriesCollection || !goalsCollection || !weightsCollection || !currentUser) return;
       try {
-        const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
+        const [entries, goalsMap, weights] = await Promise.all([
+          loadEntries(),
+          loadGoals(),
+          loadWeights()
+        ]);
         const userDisplay = document.getElementById("user-display");
         if (userDisplay && currentUser) {
           const email = currentUser.email || "";
@@ -697,7 +886,9 @@
         }
         renderTodayAndWeek(entries, goalsMap);
         renderHistory(entries);
+        renderWeightSection(weights);
         setDefaultDateInput();
+        setDefaultWeightDateInput();
         syncGoalInputToSelectedDate(goalsMap);
       } catch (err) {
         console.error(err);
@@ -723,12 +914,14 @@
         const uid = user.uid;
         entriesCollection = db.collection("users").doc(uid).collection("entries");
         goalsCollection   = db.collection("users").doc(uid).collection("goals");
+        weightsCollection = db.collection("users").doc(uid).collection("weights");
         showAppScreen();
         renderAll();
       } else {
         currentUser = null;
         entriesCollection = null;
-        goalsCollection = null;
+        goalsCollection   = null;
+        weightsCollection = null;
         showAuthScreen();
       }
     });
@@ -796,6 +989,7 @@
       const goalInput  = document.getElementById("goal-for-date");
 
       setDefaultDateInput();
+      setDefaultWeightDateInput();
 
       mealForm.addEventListener("submit", async function (e) {
         e.preventDefault();
@@ -861,21 +1055,50 @@
         });
       }
 
-      // EXPORT BACKUP (entries + goals)
-      document.getElementById("export-btn").addEventListener("click", async function () {
-        if (!entriesCollection || !goalsCollection) {
+      // WEIGHT SAVE
+      const weightDateInput  = document.getElementById("weight-date");
+      const weightValueInput = document.getElementById("weight-value");
+      const weightSaveBtn    = document.getElementById("weight-save-btn");
+
+      weightSaveBtn.addEventListener("click", async () => {
+        if (!weightsCollection) {
           alert("Please log in first.");
           return;
         }
-        const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
-        const payload = { entries: entries, goals: goalsMap };
+        let dateKey = weightDateInput.value || formatDateKey(new Date());
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+          dateKey = formatDateKey(new Date());
+        }
+        const weightVal = Number(weightValueInput.value);
+        if (isNaN(weightVal) || weightVal <= 0) {
+          alert("Please enter a valid weight.");
+          return;
+        }
+        await setWeightForDate(dateKey, weightVal);
+        weightValueInput.value = "";
+        setDefaultWeightDateInput();
+        renderAll();
+      });
+
+      // EXPORT BACKUP (entries + goals + weights)
+      document.getElementById("export-btn").addEventListener("click", async function () {
+        if (!entriesCollection || !goalsCollection || !weightsCollection) {
+          alert("Please log in first.");
+          return;
+        }
+        const [entries, goalsMap, weights] = await Promise.all([
+          loadEntries(),
+          loadGoals(),
+          loadWeights()
+        ]);
+        const payload = { entries: entries, goals: goalsMap, weights: weights };
         const json = JSON.stringify(payload, null, 2);
         const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         const dateStr = new Date().toISOString().slice(0, 10);
         a.href = url;
-        a.download = "diet-backup-" + dateStr + ".json";
+        a.download = "health-backup-" + dateStr + ".json";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -885,7 +1108,7 @@
       // IMPORT BACKUP
       const importInput = document.getElementById("import-file");
       document.getElementById("import-btn").addEventListener("click", function () {
-        if (!entriesCollection || !goalsCollection) {
+        if (!entriesCollection || !goalsCollection || !weightsCollection) {
           alert("Please log in first.");
           return;
         }
@@ -902,19 +1125,23 @@
             const parsed = JSON.parse(e.target.result);
             let rawEntries;
             let goalsObj = {};
+            let weightsArr = [];
 
             if (Array.isArray(parsed)) {
-              rawEntries = parsed; // old format
+              rawEntries = parsed; // very old format (entries only)
             } else if (parsed && Array.isArray(parsed.entries)) {
               rawEntries = parsed.entries;
               if (parsed.goals && typeof parsed.goals === "object") {
                 goalsObj = parsed.goals;
               }
+              if (Array.isArray(parsed.weights)) {
+                weightsArr = parsed.weights;
+              }
             } else {
               throw new Error("Invalid format");
             }
 
-            const cleaned = rawEntries
+            const cleanedEntries = rawEntries
               .map(item => ({
                 dateKey: String(item.dateKey || formatDateKey(new Date())),
                 timestamp: Number(item.timestamp || Date.now()),
@@ -931,12 +1158,12 @@
                   item.protein >= 0
               );
 
-            await replaceAllEntriesAndGoals(cleaned, goalsObj);
+            await replaceAllData(cleanedEntries, goalsObj, weightsArr);
             renderAll();
             alert("Backup imported successfully.");
           } catch (err) {
             console.error(err);
-            alert("Could not import this file. It does not look like a valid diet backup.");
+            alert("Could not import this file. It does not look like a valid health backup.");
           } finally {
             importInput.value = "";
           }
@@ -964,7 +1191,7 @@
         tabTodayBtn.classList.remove("tab-active");
       });
 
-      // Initial: auth screen is shown by default until auth state fires
+      // Initial: auth screen shown until auth state fires
       showAuthScreen();
     });
   </script>
