@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Health Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f7;
+    }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      padding-bottom: 56px; /* space for tab bar */
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 4px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+      color: #555;
+    }
+    input[type="text"],
+    input[type="number"],
+    input[type="date"] {
+      width: 100%;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      background: #007aff;
+      color: white;
+    }
+    button:active {
+      opacity: 0.8;
+    }
+    .summary {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+    }
+    .summary div {
+      flex: 1;
+      text-align: center;
+    }
+    .summary div:not(:last-child) {
+      border-right: 1px solid #eee;
+    }
+    .meals {
+      margin-top: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .meal-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      padding: 4px 0;
+      border-bottom: 1px solid #f0f0f0;
+      gap: 6px;
+    }
+    .meal-item span.food {
+      flex: 1;
+      margin-right: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meal-item span.cal,
+    .meal-item span.prot {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .small {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 4px;
+    }
+    .btn-secondary {
+      background: #34c759;
+    }
+    .btn-outline {
+      background: #ffffff;
+      color: #007aff;
+      border: 1px solid #007aff;
+    }
+    .delete-btn {
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: #ff3b30;
+      margin-left: 4px;
+      flex: 0 0 auto;
+    }
+
+    /* Tab bar */
+    .tab-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 48px;
+      background: #ffffff;
+      border-top: 1px solid #ddd;
+      display: flex;
+    }
+    .tab-btn {
+      flex: 1;
+      border-radius: 0;
+      padding: 8px 0;
+      font-size: 0.9rem;
+      background: #f5f5f7;
+      color: #555;
+      border: none;
+    }
+    .tab-active {
+      background: #007aff;
+      color: #ffffff;
+    }
+    .tab-bar button {
+      width: 50%;
+      box-shadow: none;
+    }
+
+    /* History styles */
+    .history-day {
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #eee;
+    }
+    .history-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>My Health Tracker</h1>
+    <div id="user-display" class="small" style="text-align:center; margin-bottom:10px;"></div>
+
+    <!-- TODAY TAB CONTENT -->
+    <div id="tab-today">
+      <!-- Today summary -->
+      <div class="card" id="today-card">
+        <div class="summary">
+          <div>
+            <div id="today-calories">0</div>
+            <div class="small">Today (kcal)</div>
+          </div>
+          <div>
+            <div id="today-protein">0</div>
+            <div class="small">Today Protein (g)</div>
+          </div>
+          <div>
+            <div id="goal-calories">1800</div>
+            <div class="small">Daily Goal</div>
+          </div>
+          <div>
+            <div id="remaining-calories">0</div>
+            <div class="small">Remaining</div>
+          </div>
+        </div>
+        <div class="meals" id="today-meals"></div>
+      </div>
+
+      <!-- Add meal form -->
+      <div class="card">
+        <form id="meal-form">
+          <label for="date">Date</label>
+          <input type="date" id="date" required />
+
+          <label for="food">Food</label>
+          <input type="text" id="food" required placeholder="e.g. Paneer, 2 rotis" />
+
+          <label for="calories">Calories</label>
+          <input type="number" id="calories" required inputmode="decimal" placeholder="e.g. 450" />
+
+          <label for="protein">Protein (g)</label>
+          <input type="number" id="protein" inputmode="decimal" placeholder="e.g. 25" />
+
+          <button type="submit">Add Meal</button>
+        </form>
+
+        <!-- Per-date goal input -->
+        <div class="small" style="margin-top:8px;">
+          <label for="goal-for-date">Goal for this date (kcal)</label>
+          <input type="number" id="goal-for-date" inputmode="decimal" placeholder="e.g. 1800" />
+        </div>
+
+        <div class="small">
+          You can change the date to add back-dated entries (e.g. yesterday or last week).
+        </div>
+      </div>
+
+      <!-- Weekly stats -->
+      <div class="card">
+        <div class="summary">
+          <div>
+            <div id="avg-7days">0</div>
+            <div class="small">Last 7 days avg (kcal)</div>
+          </div>
+          <div>
+            <div id="avg-deficit">0</div>
+            <div class="small">Avg daily deficit</div>
+          </div>
+        </div>
+        <div class="summary" style="margin-top:8px;">
+          <div>
+            <div id="avg-protein-7days">0</div>
+            <div class="small">Last 7 days avg (g protein)</div>
+          </div>
+        </div>
+        <div class="small" id="week-range" style="text-align:center;margin-top:6px;"></div>
+      </div>
+
+      <!-- Backup & restore -->
+      <div class="card">
+        <div class="small" style="margin-bottom:8px;"><strong>Backup & Restore</strong></div>
+        <button type="button" id="export-btn" class="btn-outline">Export backup</button>
+        <button type="button" id="import-btn" class="btn-secondary" style="margin-top:8px;">Import backup</button>
+        <input type="file" id="import-file" accept="application/json" style="display:none" />
+        <div class="small">
+          Export creates a backup file you can save in Files / iCloud.<br />
+          Import will replace your current data with the backup.
+        </div>
+      </div>
+
+      <div class="small">
+        Default goal is <b>1800</b>, but you can override it per day using "Goal for this date".
+      </div>
+    </div>
+
+    <!-- HISTORY TAB CONTENT -->
+    <div id="tab-history" style="display:none;">
+      <div class="card">
+        <div class="small" style="margin-bottom:8px;"><strong>History</strong></div>
+        <div class="small">All past days, newest first. Each day shows total calories & protein and foods logged.</div>
+      </div>
+      <div class="card">
+        <div id="history-list" class="meals"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom tab bar -->
+  <div class="tab-bar">
+    <button type="button" id="tab-today-btn" class="tab-btn tab-active">Today</button>
+    <button type="button" id="tab-history-btn" class="tab-btn">History</button>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // === SETTINGS ===
+    const DAILY_GOAL = 1800; // base goal if no per-day override
+
+    // === FILL THIS WITH YOUR FIREBASE CONFIG ===
+    const firebaseConfig = {
+      apiKey: "AIzaSyBh4FkGLFPgXxgLXpu876iMWgsdAgmlblg",
+      authDomain: "health-191f2.firebaseapp.com",
+      projectId: "health-191f2",
+      storageBucket: "health-191f2.firebasestorage.app",
+      messagingSenderId: "1085612138006",
+      appId: "1:1085612138006:web:d3fbf9b2c09361105e5f37"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Fixed user id (same across all your devices)
+    const USER_ID = "Kirtikumar Bangera";
+
+    const entriesCollection = db.collection("users").doc(USER_ID).collection("entries");
+    const goalsCollection   = db.collection("users").doc(USER_ID).collection("goals");
+
+    // === FIRESTORE HELPERS ===
+    async function loadEntries() {
+      const snapshot = await entriesCollection.orderBy("timestamp", "asc").get();
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    }
+
+    async function loadGoals() {
+      const snapshot = await goalsCollection.get();
+      const goals = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data && data.dateKey && typeof data.goal !== "undefined") {
+          goals[data.dateKey] = data.goal;
+        }
+      });
+      return goals;
+    }
+
+    async function addEntry(entry) {
+      const docRef = entriesCollection.doc();
+      await docRef.set(entry);
+    }
+
+    async function deleteEntry(id) {
+      await entriesCollection.doc(id).delete();
+      await renderAll();
+    }
+
+    async function setGoalForDate(dateKey, goalValue) {
+      const docRef = goalsCollection.doc(dateKey);
+      if (goalValue == null || isNaN(goalValue) || goalValue <= 0) {
+        await docRef.delete().catch(() => {});
+      } else {
+        await docRef.set({ dateKey: dateKey, goal: goalValue });
+      }
+    }
+
+    async function replaceAllEntriesAndGoals(entries, goalsObj) {
+      const [entrySnap, goalSnap] = await Promise.all([
+        entriesCollection.get(),
+        goalsCollection.get()
+      ]);
+      const batch = db.batch();
+      entrySnap.forEach(doc => batch.delete(doc.ref));
+      goalSnap.forEach(doc => batch.delete(doc.ref));
+
+      entries.forEach(e => {
+        const ref = entriesCollection.doc();
+        const toSave = {
+          dateKey: e.dateKey,
+          timestamp: e.timestamp,
+          food: e.food,
+          calories: e.calories,
+          protein: e.protein
+        };
+        batch.set(ref, toSave);
+      });
+
+      if (goalsObj && typeof goalsObj === "object") {
+        Object.keys(goalsObj).forEach(dateKey => {
+          const val = Number(goalsObj[dateKey]);
+          if (!isNaN(val) && val > 0) {
+            const ref = goalsCollection.doc(dateKey);
+            batch.set(ref, { dateKey: dateKey, goal: val });
+          }
+        });
+      }
+
+      await batch.commit();
+    }
+
+    // === DATE HELPERS ===
+    function formatDateKey(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    function getLastNDates(n) {
+      const dates = [];
+      const today = new Date();
+      for (let i = 0; i < n; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        dates.push(formatDateKey(d));
+      }
+      return dates;
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, function (c) {
+        return {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;"
+        }[c];
+      });
+    }
+
+    function setDefaultDateInput() {
+      const dateInput = document.getElementById("date");
+      if (!dateInput) return;
+      const todayKey = formatDateKey(new Date());
+      if (!dateInput.value) {
+        dateInput.value = todayKey;
+      }
+      dateInput.max = todayKey;
+    }
+
+    function getGoalForDate(dateKey, goalsMap) {
+      const raw = goalsMap[dateKey];
+      const num = Number(raw);
+      if (!isNaN(num) && num > 0) return num;
+      return DAILY_GOAL;
+    }
+
+    function syncGoalInputToSelectedDate(goalsMap) {
+      const dateInput = document.getElementById("date");
+      const goalInput = document.getElementById("goal-for-date");
+      if (!dateInput || !goalInput) return;
+      let dateKey = dateInput.value || formatDateKey(new Date());
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+        dateKey = formatDateKey(new Date());
+      }
+      const g = goalsMap[dateKey];
+      if (typeof g !== "undefined" && !isNaN(Number(g)) && Number(g) > 0) {
+        goalInput.value = Number(g);
+      } else {
+        goalInput.value = "";
+        goalInput.placeholder = DAILY_GOAL.toString();
+      }
+    }
+
+    // === RENDER FUNCTIONS ===
+    function renderTodayAndWeek(entries, goalsMap) {
+      const todayKey = formatDateKey(new Date());
+      const todayGoal = getGoalForDate(todayKey, goalsMap);
+
+      const todayEntries = entries.filter(e => e.dateKey === todayKey);
+      const todayTotal   = todayEntries.reduce((sum, e) => sum + e.calories, 0);
+      const todayProtein = todayEntries.reduce((sum, e) => sum + (e.protein || 0), 0);
+
+      document.getElementById("today-calories").textContent   = todayTotal.toFixed(0);
+      document.getElementById("today-protein").textContent    = todayProtein.toFixed(0);
+      document.getElementById("goal-calories").textContent    = todayGoal.toFixed(0);
+      document.getElementById("remaining-calories").textContent =
+        Math.max(todayGoal - todayTotal, 0).toFixed(0);
+
+      const mealsDiv = document.getElementById("today-meals");
+      mealsDiv.innerHTML = "";
+      if (todayEntries.length === 0) {
+        mealsDiv.innerHTML = '<div class="small">No meals logged today yet.</div>';
+      } else {
+        todayEntries.forEach(e => {
+          const row = document.createElement("div");
+          row.className = "meal-item";
+
+          const foodSpan = document.createElement("span");
+          foodSpan.className = "food";
+          foodSpan.textContent = e.food;
+
+          const calSpan = document.createElement("span");
+          calSpan.className = "cal";
+          calSpan.textContent = e.calories.toFixed(0) + " kcal";
+
+          const protSpan = document.createElement("span");
+          protSpan.className = "prot";
+          const prot = e.protein || 0;
+          protSpan.textContent = prot.toFixed(0) + " g";
+
+          const delSpan = document.createElement("span");
+          delSpan.className = "delete-btn";
+          delSpan.textContent = "✕";
+          delSpan.onclick = async () => {
+            if (confirm("Delete this entry?")) {
+              await deleteEntry(e.id);
+            }
+          };
+
+          row.appendChild(foodSpan);
+          row.appendChild(calSpan);
+          row.appendChild(protSpan);
+          row.appendChild(delSpan);
+          mealsDiv.appendChild(row);
+        });
+      }
+
+      // Last 7 days stats
+      const last7 = getLastNDates(7);
+      let total7 = 0;
+      let totalProtein7 = 0;
+      let totalDeficit7 = 0;
+      let daysWithData = 0;
+
+      last7.forEach(dayKey => {
+        const dayEntries = entries.filter(e => e.dateKey === dayKey);
+        const dayTotal   = dayEntries.reduce((sum, e) => sum + e.calories, 0);
+        const dayProt    = dayEntries.reduce((sum, e) => sum + (e.protein || 0), 0);
+        if (dayTotal > 0) {
+          const dayGoal = getGoalForDate(dayKey, goalsMap);
+          daysWithData++;
+          total7        += dayTotal;
+          totalProtein7 += dayProt;
+          totalDeficit7 += (dayGoal - dayTotal);
+        }
+      });
+
+      const avg7       = daysWithData > 0 ? total7 / daysWithData : 0;
+      const avgProt7   = daysWithData > 0 ? totalProtein7 / daysWithData : 0;
+      const avgDeficit = daysWithData > 0 ? totalDeficit7 / daysWithData : 0;
+
+      document.getElementById("avg-7days").textContent         = avg7.toFixed(0);
+      document.getElementById("avg-deficit").textContent       = avgDeficit.toFixed(0);
+      document.getElementById("avg-protein-7days").textContent = avgProt7.toFixed(0);
+
+      const weekStartKey = last7[0]; // today
+      const weekEndKey   = last7[last7.length - 1]; // 6 days ago
+      document.getElementById("week-range").textContent =
+        "Last 7 days: " + weekStartKey + " → " + weekEndKey + ".";
+    }
+
+    function renderHistory(entries) {
+      const container = document.getElementById("history-list");
+      if (!container) return;
+
+      if (!entries.length) {
+        container.innerHTML = '<div class="small">No entries logged yet.</div>';
+        return;
+      }
+
+      const byDate = {};
+      entries.forEach(e => {
+        if (!byDate[e.dateKey]) byDate[e.dateKey] = [];
+        byDate[e.dateKey].push(e);
+      });
+
+      const dates = Object.keys(byDate).sort().reverse(); // newest first
+
+      let html = "";
+      dates.forEach(dateKey => {
+        const dayEntries   = byDate[dateKey];
+        const total        = dayEntries.reduce((sum, e) => sum + e.calories, 0);
+        const totalProtein = dayEntries.reduce((sum, e) => sum + (e.protein || 0), 0);
+        html +=
+          '<div class="history-day">' +
+          '<div class="history-date" style="font-weight:600; font-size:1rem; margin-bottom:4px;">' +
+          dateKey +
+          "</div>" +
+          '<div class="history-header" style="margin-bottom:6px;">' +
+          "<span>Total</span>" +
+          "<span>" +
+          total.toFixed(0) +
+          " kcal / " +
+          totalProtein.toFixed(0) +
+          " g</span>" +
+          "</div>";
+
+        dayEntries.forEach(e => {
+          const prot = e.protein || 0;
+          html +=
+            '<div class="meal-item">' +
+            '<span class="food">' +
+            escapeHtml(e.food) +
+            "</span>" +
+            '<span class="cal">' +
+            e.calories.toFixed(0) +
+            " kcal</span>" +
+            '<span class="prot">' +
+            prot.toFixed(0) +
+            " g</span>" +
+            '<span class="delete-btn" data-id="' + e.id + '">✕</span>' +
+            "</div>";
+        });
+
+        html += "</div>";
+      });
+
+      container.innerHTML = html || '<div class="small">No entries logged yet.</div>';
+
+      // wire up delete buttons in history
+      container.querySelectorAll(".delete-btn").forEach(el => {
+        const id = el.getAttribute("data-id");
+        if (!id) return;
+        el.onclick = async () => {
+          if (confirm("Delete this entry?")) {
+            await deleteEntry(id);
+          }
+        };
+      });
+    }
+
+    async function renderAll() {
+      try {
+        const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
+        document.getElementById("user-display").textContent =
+          "Tracking for: " + USER_ID;
+        renderTodayAndWeek(entries, goalsMap);
+        renderHistory(entries);
+        setDefaultDateInput();
+        syncGoalInputToSelectedDate(goalsMap);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // === INIT ===
+    window.addEventListener("DOMContentLoaded", function () {
+      const mealForm   = document.getElementById("meal-form");
+      const dateInput  = document.getElementById("date");
+      const goalInput  = document.getElementById("goal-for-date");
+
+      // Set default date immediately
+      setDefaultDateInput();
+
+      // FORM SUBMIT
+      mealForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const foodInput     = document.getElementById("food");
+        const caloriesInput = document.getElementById("calories");
+        const proteinInput  = document.getElementById("protein");
+
+        const food       = foodInput.value.trim();
+        const calories   = Number(caloriesInput.value);
+        const proteinRaw = Number(proteinInput.value);
+        const protein    = isNaN(proteinRaw) || proteinRaw < 0 ? 0 : proteinRaw;
+
+        let dateKey = dateInput.value || formatDateKey(new Date());
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+          dateKey = formatDateKey(new Date());
+        }
+
+        if (!food || isNaN(calories) || calories <= 0) {
+          alert("Please enter a food and a positive calorie value.");
+          return;
+        }
+
+        const entry = {
+          dateKey: dateKey,
+          timestamp: Date.now(),
+          food: food,
+          calories: calories,
+          protein: protein
+        };
+
+        await addEntry(entry);
+
+        foodInput.value = "";
+        caloriesInput.value = "";
+        proteinInput.value = "";
+        setDefaultDateInput();
+        foodInput.focus();
+        renderAll();
+      });
+
+      // DATE CHANGE => sync goal input for that date
+      if (dateInput && goalInput) {
+        dateInput.addEventListener("change", async function () {
+          const goalsMap = await loadGoals();
+          syncGoalInputToSelectedDate(goalsMap);
+        });
+
+        goalInput.addEventListener("change", async function () {
+          let dateKey = dateInput.value || formatDateKey(new Date());
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+            dateKey = formatDateKey(new Date());
+          }
+          const val = Number(goalInput.value);
+          await setGoalForDate(dateKey, val);
+          renderAll();
+        });
+      }
+
+      // EXPORT BACKUP (entries + goals)
+      document.getElementById("export-btn").addEventListener("click", async function () {
+        const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
+        const payload = { entries: entries, goals: goalsMap };
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const dateStr = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = "diet-backup-" + dateStr + ".json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+
+      // IMPORT BACKUP
+      const importInput = document.getElementById("import-file");
+      document.getElementById("import-btn").addEventListener("click", function () {
+        importInput.click();
+      });
+
+      importInput.addEventListener("change", function (event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async function (e) {
+          try {
+            const parsed = JSON.parse(e.target.result);
+            let rawEntries;
+            let goalsObj = {};
+
+            if (Array.isArray(parsed)) {
+              rawEntries = parsed; // old format
+            } else if (parsed && Array.isArray(parsed.entries)) {
+              rawEntries = parsed.entries;
+              if (parsed.goals && typeof parsed.goals === "object") {
+                goalsObj = parsed.goals;
+              }
+            } else {
+              throw new Error("Invalid format");
+            }
+
+            const cleaned = rawEntries
+              .map(item => ({
+                dateKey: String(item.dateKey || formatDateKey(new Date())),
+                timestamp: Number(item.timestamp || Date.now()),
+                food: String(item.food || "").trim(),
+                calories: Number(item.calories || 0),
+                protein: Number(item.protein || 0)
+              }))
+              .filter(
+                item =>
+                  item.food &&
+                  !isNaN(item.calories) &&
+                  item.calories > 0 &&
+                  !isNaN(item.protein) &&
+                  item.protein >= 0
+              );
+
+            await replaceAllEntriesAndGoals(cleaned, goalsObj);
+            renderAll();
+            alert("Backup imported successfully.");
+          } catch (err) {
+            console.error(err);
+            alert("Could not import this file. It does not look like a valid diet backup.");
+          } finally {
+            importInput.value = "";
+          }
+        };
+        reader.readAsText(file);
+      });
+
+      // TABS
+      const tabTodayBtn   = document.getElementById("tab-today-btn");
+      const tabHistoryBtn = document.getElementById("tab-history-btn");
+      const tabToday      = document.getElementById("tab-today");
+      const tabHistory    = document.getElementById("tab-history");
+
+      tabTodayBtn.addEventListener("click", function () {
+        tabToday.style.display = "block";
+        tabHistory.style.display = "none";
+        tabTodayBtn.classList.add("tab-active");
+        tabHistoryBtn.classList.remove("tab-active");
+      });
+
+      tabHistoryBtn.addEventListener("click", function () {
+        tabToday.style.display = "none";
+        tabHistory.style.display = "block";
+        tabHistoryBtn.classList.add("tab-active");
+        tabTodayBtn.classList.remove("tab-active");
+      });
+
+      // Initial render
+      renderAll();
+    });
+  </script>
+</body>
+</html>
