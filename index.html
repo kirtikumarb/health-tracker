@@ -34,6 +34,8 @@
       color: #555;
     }
     input[type="text"],
+    input[type="email"],
+    input[type="password"],
     input[type="number"],
     input[type="date"] {
       width: 100%;
@@ -158,12 +160,90 @@
       font-weight: 600;
       margin-bottom: 4px;
     }
+
+    /* Auth screen */
+    #auth-screen {
+      max-width: 420px;
+      margin: 40px auto;
+    }
+    .auth-title {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .auth-subtitle {
+      font-size: 0.85rem;
+      text-align: center;
+      color: #666;
+      margin-bottom: 12px;
+    }
+    .auth-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .auth-buttons button {
+      width: 100%;
+    }
+    .error-text {
+      font-size: 0.8rem;
+      color: #ff3b30;
+      margin-top: 4px;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .top-bar-user {
+      font-size: 0.8rem;
+      color: #555;
+    }
+    .top-bar button {
+      width: auto;
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      border-radius: 999px;
+    }
   </style>
 </head>
 <body>
-  <div class="app">
-    <h1>My Health Tracker</h1>
-    <div id="user-display" class="small" style="text-align:center; margin-bottom:10px;"></div>
+
+  <!-- AUTH SCREEN (shown when not logged in) -->
+  <div id="auth-screen">
+    <div class="card">
+      <div class="auth-title">My Diet Tracker</div>
+      <div class="auth-subtitle">Sign in to track your calories & protein.</div>
+
+      <label for="auth-email">Email</label>
+      <input type="email" id="auth-email" placeholder="you@example.com" />
+
+      <label for="auth-password">Password</label>
+      <input type="password" id="auth-password" placeholder="Minimum 6 characters" />
+
+      <div class="auth-buttons" style="margin-top:8px;">
+        <button type="button" id="btn-login">Log in</button>
+        <button type="button" id="btn-register" class="btn-secondary">Create account</button>
+      </div>
+
+      <div id="auth-error" class="error-text"></div>
+
+      <div class="small" style="margin-top:10px;">
+        </br>Track. Transform. Triumph.
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP (hidden until logged in) -->
+  <div class="app" id="app-root" style="display:none;">
+    <div class="top-bar">
+      <div>
+        <h1 style="display:inline-block; margin-right:4px;">Health Tracker</h1>
+        <div id="user-display" class="small"></div>
+      </div>
+      <button type="button" id="btn-logout" class="btn-outline" style="padding:6px 10px;">Logout</button>
+    </div>
 
     <!-- TODAY TAB CONTENT -->
     <div id="tab-today">
@@ -248,7 +328,7 @@
         <input type="file" id="import-file" accept="application/json" style="display:none" />
         <div class="small">
           Export creates a backup file you can save in Files / iCloud.<br />
-          Import will replace your current data with the backup.
+          Import will replace your current data with the backup (for this account).
         </div>
       </div>
 
@@ -270,7 +350,7 @@
   </div>
 
   <!-- Bottom tab bar -->
-  <div class="tab-bar">
+  <div class="tab-bar" id="tab-bar" style="display:none;">
     <button type="button" id="tab-today-btn" class="tab-btn tab-active">Today</button>
     <button type="button" id="tab-history-btn" class="tab-btn">History</button>
   </div>
@@ -278,6 +358,7 @@
   <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 
   <script>
     // === SETTINGS ===
@@ -295,15 +376,16 @@
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    const auth = firebase.auth();
 
-    // Fixed user id (same across all your devices)
-    const USER_ID = "Kirtikumar Bangera";
+    // runtime globals (depend on logged-in user)
+    let currentUser = null;
+    let entriesCollection = null;
+    let goalsCollection = null;
 
-    const entriesCollection = db.collection("users").doc(USER_ID).collection("entries");
-    const goalsCollection   = db.collection("users").doc(USER_ID).collection("goals");
-
-    // === FIRESTORE HELPERS ===
+    // === FIRESTORE HELPERS (depend on collections) ===
     async function loadEntries() {
+      if (!entriesCollection) return [];
       const snapshot = await entriesCollection.orderBy("timestamp", "asc").get();
       return snapshot.docs.map(doc => ({
         id: doc.id,
@@ -312,6 +394,7 @@
     }
 
     async function loadGoals() {
+      if (!goalsCollection) return {};
       const snapshot = await goalsCollection.get();
       const goals = {};
       snapshot.docs.forEach(doc => {
@@ -324,16 +407,19 @@
     }
 
     async function addEntry(entry) {
+      if (!entriesCollection) return;
       const docRef = entriesCollection.doc();
       await docRef.set(entry);
     }
 
     async function deleteEntry(id) {
+      if (!entriesCollection || !id) return;
       await entriesCollection.doc(id).delete();
       await renderAll();
     }
 
     async function setGoalForDate(dateKey, goalValue) {
+      if (!goalsCollection) return;
       const docRef = goalsCollection.doc(dateKey);
       if (goalValue == null || isNaN(goalValue) || goalValue <= 0) {
         await docRef.delete().catch(() => {});
@@ -343,6 +429,7 @@
     }
 
     async function replaceAllEntriesAndGoals(entries, goalsObj) {
+      if (!entriesCollection || !goalsCollection) return;
       const [entrySnap, goalSnap] = await Promise.all([
         entriesCollection.get(),
         goalsCollection.get()
@@ -600,10 +687,14 @@
     }
 
     async function renderAll() {
+      if (!entriesCollection || !goalsCollection || !currentUser) return;
       try {
         const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
-        document.getElementById("user-display").textContent =
-          "Tracking for: " + USER_ID;
+        const userDisplay = document.getElementById("user-display");
+        if (userDisplay && currentUser) {
+          const email = currentUser.email || "";
+          userDisplay.textContent = email ? ("👤 " + email) : "Signed in";
+        }
         renderTodayAndWeek(entries, goalsMap);
         renderHistory(entries);
         setDefaultDateInput();
@@ -613,18 +704,106 @@
       }
     }
 
+    // === AUTH HANDLING ===
+    function showAuthScreen() {
+      document.getElementById("auth-screen").style.display = "block";
+      document.getElementById("app-root").style.display = "none";
+      document.getElementById("tab-bar").style.display = "none";
+    }
+
+    function showAppScreen() {
+      document.getElementById("auth-screen").style.display = "none";
+      document.getElementById("app-root").style.display = "block";
+      document.getElementById("tab-bar").style.display = "flex";
+    }
+
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        currentUser = user;
+        const uid = user.uid;
+        entriesCollection = db.collection("users").doc(uid).collection("entries");
+        goalsCollection   = db.collection("users").doc(uid).collection("goals");
+        showAppScreen();
+        renderAll();
+      } else {
+        currentUser = null;
+        entriesCollection = null;
+        goalsCollection = null;
+        showAuthScreen();
+      }
+    });
+
     // === INIT ===
     window.addEventListener("DOMContentLoaded", function () {
+      // AUTH FORM
+      const emailInput = document.getElementById("auth-email");
+      const passwordInput = document.getElementById("auth-password");
+      const authError = document.getElementById("auth-error");
+      const btnLogin = document.getElementById("btn-login");
+      const btnRegister = document.getElementById("btn-register");
+
+      function setAuthError(msg) {
+        authError.textContent = msg || "";
+      }
+
+      btnLogin.addEventListener("click", async () => {
+        setAuthError("");
+        const email = (emailInput.value || "").trim();
+        const password = passwordInput.value || "";
+        if (!email || !password) {
+          setAuthError("Please enter email and password.");
+          return;
+        }
+        try {
+          await auth.signInWithEmailAndPassword(email, password);
+          emailInput.value = "";
+          passwordInput.value = "";
+        } catch (err) {
+          console.error(err);
+          setAuthError(err.message || "Could not log in.");
+        }
+      });
+
+      btnRegister.addEventListener("click", async () => {
+        setAuthError("");
+        const email = (emailInput.value || "").trim();
+        const password = passwordInput.value || "";
+        if (!email || !password) {
+          setAuthError("Please enter email and password.");
+          return;
+        }
+        if (password.length < 6) {
+          setAuthError("Password must be at least 6 characters.");
+          return;
+        }
+        try {
+          await auth.createUserWithEmailAndPassword(email, password);
+          emailInput.value = "";
+          passwordInput.value = "";
+        } catch (err) {
+          console.error(err);
+          setAuthError(err.message || "Could not create account.");
+        }
+      });
+
+      document.getElementById("btn-logout").addEventListener("click", async () => {
+        await auth.signOut();
+      });
+
+      // FORM SUBMIT (meals)
       const mealForm   = document.getElementById("meal-form");
       const dateInput  = document.getElementById("date");
       const goalInput  = document.getElementById("goal-for-date");
 
-      // Set default date immediately
       setDefaultDateInput();
 
-      // FORM SUBMIT
       mealForm.addEventListener("submit", async function (e) {
         e.preventDefault();
+        if (!entriesCollection) {
+          alert("Please log in first.");
+          return;
+        }
+
         const foodInput     = document.getElementById("food");
         const caloriesInput = document.getElementById("calories");
         const proteinInput  = document.getElementById("protein");
@@ -665,11 +844,13 @@
       // DATE CHANGE => sync goal input for that date
       if (dateInput && goalInput) {
         dateInput.addEventListener("change", async function () {
+          if (!goalsCollection) return;
           const goalsMap = await loadGoals();
           syncGoalInputToSelectedDate(goalsMap);
         });
 
         goalInput.addEventListener("change", async function () {
+          if (!goalsCollection) return;
           let dateKey = dateInput.value || formatDateKey(new Date());
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
             dateKey = formatDateKey(new Date());
@@ -682,6 +863,10 @@
 
       // EXPORT BACKUP (entries + goals)
       document.getElementById("export-btn").addEventListener("click", async function () {
+        if (!entriesCollection || !goalsCollection) {
+          alert("Please log in first.");
+          return;
+        }
         const [entries, goalsMap] = await Promise.all([loadEntries(), loadGoals()]);
         const payload = { entries: entries, goals: goalsMap };
         const json = JSON.stringify(payload, null, 2);
@@ -700,6 +885,10 @@
       // IMPORT BACKUP
       const importInput = document.getElementById("import-file");
       document.getElementById("import-btn").addEventListener("click", function () {
+        if (!entriesCollection || !goalsCollection) {
+          alert("Please log in first.");
+          return;
+        }
         importInput.click();
       });
 
@@ -775,8 +964,8 @@
         tabTodayBtn.classList.remove("tab-active");
       });
 
-      // Initial render
-      renderAll();
+      // Initial: auth screen is shown by default until auth state fires
+      showAuthScreen();
     });
   </script>
 </body>
